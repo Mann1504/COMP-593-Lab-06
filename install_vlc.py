@@ -1,60 +1,98 @@
 import requests
 import hashlib
+import pathlib
 import os
 import subprocess
-from bs4 import BeautifulSoup
+
+# Constants
+BASE_URL = "https://download.videolan.org/pub/videolan/vlc/3.0.21/win64/"
+FILE_NAME_SHA256 = "vlc-3.0.21-win64.exe.sha256"
+FILE_NAME = "vlc-3.0.21-win64.exe"
+
+def get_expected_sha256():
+    """Download the SHA-256 hash file and extract the expected hash value."""
+    try:
+        response = requests.get(f'{BASE_URL}/{FILE_NAME_SHA256}')
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        return response.text.split()[0]  # Extract the hash value
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to download the SHA-256 file: {e}")
+        exit()
+
+def download_installer():
+    """Download the VLC installer and return its binary content."""
+    try:
+        response = requests.get(f'{BASE_URL}/{FILE_NAME}')
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        return response.content  # Return the binary content
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to download the installer: {e}")
+        exit()
+
+def compute_sha256(file_binary):
+    """Compute the SHA-256 hash of the downloaded installer."""
+    sha256 = hashlib.sha256(file_binary)
+    return sha256.hexdigest()
+
+def save_installer(file_binary):
+    """Save the installer to a temporary directory."""
+    try:
+        file_path = pathlib.Path(os.getenv('TEMP')) / FILE_NAME
+        with open(file_path, "wb") as outfile:
+            outfile.write(file_binary)
+        return file_path
+    except Exception as e:
+        print(f"Failed to save the installer: {e}")
+        exit()
+
+def run_installer(file_path):
+    """Run the installer silently and wait for it to complete."""
+    try:
+        result = subprocess.run([file_path, '/L=1033', '/S'], check=True)
+        if result.returncode == 0:
+            print("VLC installed successfully!")
+        else:
+            print("Installation failed.")
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to run the installer: {e}")
+        exit()
+
+def delete_installer(file_path):
+    """Delete the installer file from disk."""
+    try:
+        file_path.unlink()
+        print("Installer file deleted.")
+    except Exception as e:
+        print(f"Failed to delete the installer: {e}")
 
 def main():
-    latest_version = get_latest_version()
-    expected_sha256 = get_expected_sha256(latest_version)
-    installer_data = download_installer(latest_version)
+    """Main function to automate the VLC installation process."""
+    # Step 1: Get the expected SHA-256 hash value
+    expected_sha256 = get_expected_sha256()
+    print(f"Expected SHA-256 hash: {expected_sha256}")
 
-    if installer_ok(installer_data, expected_sha256):
-        installer_path = save_installer(installer_data)
-        run_installer(installer_path)
-        delete_installer(installer_path)
+    # Step 2: Download the installer
+    installer_binary = download_installer()
+    print(f"Downloaded installer size: {len(installer_binary)} bytes")
 
-def get_latest_version():
-    url = "https://download.videolan.org/pub/videolan/vlc/last/win64/"
-    response = requests.get(url)
-    response.raise_for_status()
+    # Step 3: Compute the SHA-256 hash of the downloaded installer
+    computed_sha256 = compute_sha256(installer_binary)
+    print(f"Computed SHA-256 hash: {computed_sha256}")
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    links = soup.find_all('a')
-    versions = [link.text for link in links if link.text.startswith("vlc-") and link.text.endswith(".exe")]
-    latest_version = versions[-1]  # Assuming the last one in the list is the latest
-    return latest_version
+    # Step 4: Verify the integrity of the downloaded installer
+    if computed_sha256 != expected_sha256:
+        print("SHA-256 hash mismatch. The installer may be corrupted. Exiting...")
+        exit()
 
-def get_expected_sha256(latest_version):
-    url = f"https://download.videolan.org/pub/videolan/vlc/3.0.17.4/win64/vlc-3.0.17.4-win64.exe.sha256"
-    response = requests.get(url)
-    response.raise_for_status()
+    # Step 5: Save the installer to disk
+    installer_path = save_installer(installer_binary)
+    print(f"Installer saved to: {installer_path}")
 
-    sha256_line = response.text.splitlines()[0]
-    expected_hash = sha256_line.split()[0]
-    return expected_hash
+    # Step 6: Run the installer silently
+    run_installer(installer_path)
 
-def download_installer(latest_version):
-    url = f"https://download.videolan.org/pub/videolan/vlc/3.0.17.4/win64/vlc-3.0.17.4-win64.exe"
-    response = requests.get(url, stream=True)
-    response.raise_for_status()
-    return response.content
+    # Step 7: Delete the installer file
+    delete_installer(installer_path)
 
-def installer_ok(installer_data, expected_sha256):
-    sha256 = hashlib.sha256(installer_data).hexdigest()
-    return sha256 == expected_sha256
-
-def save_installer(installer_data):
-    installer_path = os.path.join(os.getcwd(), "vlc_installer.exe")
-    with open(installer_path, 'wb') as file:
-        file.write(installer_data)
-    return installer_path
-
-def run_installer(installer_path):
-    subprocess.run([installer_path, '/S'], check=True)
-
-def delete_installer(installer_path):
-    os.remove(installer_path)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
